@@ -123,9 +123,9 @@ impl AuthSession {
     }
     /// Generate a fresh nonce for the next command.
     ///
-    /// The precondition `nonce_gen < rng.draws()` and the postcondition form a chain: each round’s nonce
-    /// generation is strictly greater than the previous one, so the same nonce can never be reused in two
-    /// rounds. The unpredictability of the value is the random source’s responsibility, not this function’s.
+    /// The nonce source is responsible for freshness and unpredictability. This method forwards the
+    /// value returned by [`NonceSource::nonce`] and does not maintain or validate a nonce-generation
+    /// chain.
     ///
     /// The “continue session” bit is forcibly added to the attributes: a session is a cross-command
     /// resource, and if a round forgets to set it, the peer will tear the session down unilaterally after

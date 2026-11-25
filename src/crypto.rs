@@ -32,6 +32,11 @@ pub trait HmacSha256Ctx: Sized {
     fn update(&mut self, data: &[u8]);
     fn finish(self) -> [u8; SHA256_LEN];
 }
+/// Source of fresh, unpredictable nonces for protocol rounds.
+///
+/// Implementations are responsible for ensuring that successive calls return
+/// unique, freshly generated values. [`AuthSession::begin`](crate::session::AuthSession::begin)
+/// forwards the returned nonce and does not track or validate nonce generations.
 pub trait NonceSource {
     fn nonce(&mut self) -> [u8; NONCE_LEN];
 }
