@@ -196,6 +196,9 @@ impl AuthSession {
     /// carry the command code at all. This is why “put the response for command A into command B” is a
     /// replay that fails at the digest layer.
     ///
+    /// `rhandles` is derived from command attributes and must be either `0` or `1`. Any other value is
+    /// rejected as malformed.
+    ///
     /// Any failure path marks the session as closed. Retrying the same session with the same key after a
     /// failure would give the peer another chance to guess.
     pub fn check_response<S: Sha256Ctx, H: HmacSha256Ctx>(

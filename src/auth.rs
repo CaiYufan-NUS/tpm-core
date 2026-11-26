@@ -153,6 +153,9 @@ pub(crate) fn parse_rsp_auth(
     if index >= MAX_SESSIONS {
         return Err(AuthErr::Malformed);
     }
+    if rhandles > 1 {
+        return Err(AuthErr::Malformed);
+    }
     if raw.len() < HEADER_LEN {
         return Err(AuthErr::Malformed);
     }
@@ -168,7 +171,8 @@ pub(crate) fn parse_rsp_auth(
     if size as usize != raw.len() {
         return Err(AuthErr::Malformed);
     }
-    if !c.skip(raw, rhandles * 4) {
+    let handle_bytes = rhandles.checked_mul(4).ok_or(AuthErr::Malformed)?;
+    if !c.skip(raw, handle_bytes) {
         return Err(AuthErr::Malformed);
     }
     let param_len_u32 = c.read_be32(raw).ok_or(AuthErr::Malformed)?;
@@ -244,15 +248,16 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
-    fn build_rsp_with_sessions(session_count: usize) -> Vec<u8> {
+    fn build_rsp_with_sessions(session_count: usize, rhandles: usize) -> Vec<u8> {
         let per_session = 2 + NONCE_LEN + 1 + 2 + SHA256_LEN;
-        let total = HEADER_LEN + 4 + per_session * session_count;
+        let total = HEADER_LEN + rhandles * 4 + 4 + per_session * session_count;
         let mut raw = vec![0u8; total];
         raw[0..2].copy_from_slice(&ST_SESSIONS.to_be_bytes());
         raw[2..6].copy_from_slice(&(total as u32).to_be_bytes());
         raw[6..10].copy_from_slice(&0u32.to_be_bytes());
-        raw[10..14].copy_from_slice(&0u32.to_be_bytes());
-        let mut off = 14;
+        let mut off = HEADER_LEN + rhandles * 4;
+        raw[off..off + 4].copy_from_slice(&0u32.to_be_bytes());
+        off += 4;
         for _ in 0..session_count {
             raw[off..off + 2].copy_from_slice(&(NONCE_LEN as u16).to_be_bytes());
             off += 2 + NONCE_LEN;
@@ -266,12 +271,26 @@ mod tests {
 
     #[test]
     fn parse_rsp_auth_rejects_index_at_or_above_max_sessions() {
-        let raw_ok = build_rsp_with_sessions(MAX_SESSIONS);
+        let raw_ok = build_rsp_with_sessions(MAX_SESSIONS, 0);
         assert!(parse_rsp_auth(&raw_ok, 0, MAX_SESSIONS - 1).is_ok());
 
-        let raw_too_many = build_rsp_with_sessions(MAX_SESSIONS + 1);
+        let raw_too_many = build_rsp_with_sessions(MAX_SESSIONS + 1, 0);
         assert!(matches!(
             parse_rsp_auth(&raw_too_many, 0, MAX_SESSIONS),
+            Err(AuthErr::Malformed)
+        ));
+    }
+
+    #[test]
+    fn parse_rsp_auth_rejects_invalid_handle_count() {
+        let raw = build_rsp_with_sessions(1, 1);
+        assert!(parse_rsp_auth(&raw, 1, 0).is_ok());
+        assert!(matches!(
+            parse_rsp_auth(&raw, 2, 0),
+            Err(AuthErr::Malformed)
+        ));
+        assert!(matches!(
+            parse_rsp_auth(&raw, usize::MAX / 4 + 1, 0),
             Err(AuthErr::Malformed)
         ));
     }
