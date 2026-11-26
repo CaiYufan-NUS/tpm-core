@@ -1,7 +1,8 @@
 use super::handle::*;
 
+#[track_caller]
 fn assert_slot_index(i: usize) {
-    assert!(i < SLOTS, "slot index out of bounds");
+    assert!(i < SLOTS, "slot index {i} out of range (must be < {SLOTS})");
 }
 
 /// Slot state in the context table.
@@ -133,5 +134,17 @@ impl SpaceTable {
     pub fn slot_at(&self, i: usize) -> CtxSlot {
         assert_slot_index(i);
         self.ctx[i]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "out of range")]
+    fn slot_at_panics_on_out_of_range_index() {
+        let table = SpaceTable::new();
+        table.slot_at(usize::MAX);
     }
 }
