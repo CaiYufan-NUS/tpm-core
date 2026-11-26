@@ -48,6 +48,7 @@ fn bit_value(n: u32) -> u8 {
 /// equivalent for values below 24, and the division form can be fed directly into integer reasoning
 /// without switching to a bit-vector solver.
 fn pcr_select_bitmap(pcr_idx: u32) -> [u8; PCR_SELECT_MIN] {
+    assert!(pcr_idx < PLATFORM_PCR, "pcr_idx out of range");
     let byte_idx = pcr_idx / 8;
     let mask = bit_value(pcr_idx % 8);
     if byte_idx == 0 {
@@ -76,6 +77,10 @@ pub fn pcr_handle(pcr_idx: u32) -> u32 {
 /// sizeofSelect u8  = 3
 /// pcrSelect    u8[3]
 /// ```
+///
+/// # Panics
+///
+/// Panics if `pcr_idx >= PLATFORM_PCR`.
 pub fn pcr_read_payload(alg_id: u16, pcr_idx: u32) -> [u8; 10] {
     let cnt = be32_bytes(1);
     let alg = be16_bytes(alg_id);
@@ -132,6 +137,25 @@ pub fn pcr_extend_payload(alg_id: u16, digest: &[u8; SHA256_LEN]) -> [u8; PCR_EX
     out[5] = alg[1];
     out[6..6 + SHA256_LEN].copy_from_slice(digest);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pcr_read_payload_maps_boundary_indices() {
+        let p0 = pcr_read_payload(0x000B, 0);
+        let p23 = pcr_read_payload(0x000B, PLATFORM_PCR - 1);
+        assert_eq!(&p0[7..10], &[1, 0, 0]);
+        assert_eq!(&p23[7..10], &[0, 0, 0x80]);
+    }
+
+    #[test]
+    #[should_panic(expected = "pcr_idx out of range")]
+    fn pcr_read_payload_panics_on_out_of_range_index() {
+        let _ = pcr_read_payload(0x000B, PLATFORM_PCR);
+    }
 }
 /// `TPM2_GetCapability` payload (Part 3 §30.2).
 ///
