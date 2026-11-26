@@ -34,8 +34,11 @@ impl Cursor {
     pub fn at(pos: usize) -> Cursor {
         Cursor { pos }
     }
+    /// Number of bytes left from the current cursor position.
+    ///
+    /// Returns zero if the cursor is already past the end of `data`.
     pub fn remaining(&self, data: &[u8]) -> usize {
-        data.len() - self.pos
+        data.len().saturating_sub(self.pos)
     }
     /// Whether the remaining bytes are exactly exhausted. Used for checks such as “the response tail must
     /// contain no extra data.”
@@ -109,4 +112,21 @@ impl Cursor {
 /// bitmap means the algorithm is supported but not active.
 pub(crate) fn any_nonzero(s: &[u8]) -> bool {
     s.iter().any(|&b| b != 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remaining_is_total_for_past_end_cursor() {
+        let c = Cursor::at(5);
+        assert_eq!(c.remaining(&[0u8; 3]), 0);
+    }
+
+    #[test]
+    fn remaining_matches_exact_difference_in_bounds() {
+        let c = Cursor::at(2);
+        assert_eq!(c.remaining(&[0u8; 10]), 8);
+    }
 }
