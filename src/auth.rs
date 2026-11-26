@@ -150,6 +150,9 @@ pub(crate) fn parse_rsp_auth(
     rhandles: usize,
     index: usize,
 ) -> Result<RspAuth, AuthErr> {
+    if index >= MAX_SESSIONS {
+        return Err(AuthErr::Malformed);
+    }
     if raw.len() < HEADER_LEN {
         return Err(AuthErr::Malformed);
     }
@@ -233,4 +236,43 @@ pub(crate) fn ct_eq32(a: &[u8; SHA256_LEN], b: &[u8]) -> bool {
         acc |= a[i] ^ b[i];
     }
     acc == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    fn build_rsp_with_sessions(session_count: usize) -> Vec<u8> {
+        let per_session = 2 + NONCE_LEN + 1 + 2 + SHA256_LEN;
+        let total = HEADER_LEN + 4 + per_session * session_count;
+        let mut raw = vec![0u8; total];
+        raw[0..2].copy_from_slice(&ST_SESSIONS.to_be_bytes());
+        raw[2..6].copy_from_slice(&(total as u32).to_be_bytes());
+        raw[6..10].copy_from_slice(&0u32.to_be_bytes());
+        raw[10..14].copy_from_slice(&0u32.to_be_bytes());
+        let mut off = 14;
+        for _ in 0..session_count {
+            raw[off..off + 2].copy_from_slice(&(NONCE_LEN as u16).to_be_bytes());
+            off += 2 + NONCE_LEN;
+            raw[off] = 0;
+            off += 1;
+            raw[off..off + 2].copy_from_slice(&(SHA256_LEN as u16).to_be_bytes());
+            off += 2 + SHA256_LEN;
+        }
+        raw
+    }
+
+    #[test]
+    fn parse_rsp_auth_rejects_index_at_or_above_max_sessions() {
+        let raw_ok = build_rsp_with_sessions(MAX_SESSIONS);
+        assert!(parse_rsp_auth(&raw_ok, 0, MAX_SESSIONS - 1).is_ok());
+
+        let raw_too_many = build_rsp_with_sessions(MAX_SESSIONS + 1);
+        assert!(matches!(
+            parse_rsp_auth(&raw_too_many, 0, MAX_SESSIONS),
+            Err(AuthErr::Malformed)
+        ));
+    }
 }
