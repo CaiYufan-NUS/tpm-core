@@ -13,6 +13,9 @@ use crate::{
 /// many handles the command has and how its parameters are arranged, which is command-layer
 /// knowledge. This layer is responsible only for checking that these partitions do not overlap and
 /// then filling them in.
+///
+/// Callers must ensure `sess_off + CMD_SESSION_LEN` and `param_off + param_len` are within the
+/// command buffer and that the two areas do not overlap.
 pub struct CmdLayout {
     /// Total command length. It must match the length field in the packet header; this is checked by
     /// the link layer.
@@ -28,6 +31,23 @@ pub struct CmdLayout {
     /// Number of handles in the response. The digest covers the portion after the handles, and if this
     /// count is wrong, the entire offset layout becomes wrong.
     pub rhandles: usize,
+}
+impl CmdLayout {
+    fn validate(&self, buf_len: usize) -> bool {
+        let Some(sess_end) = self.sess_off.checked_add(crate::auth::CMD_SESSION_LEN) else {
+            return false;
+        };
+        let Some(param_end) = self.param_off.checked_add(self.param_len) else {
+            return false;
+        };
+        if sess_end > buf_len
+            || param_end > buf_len
+            || sess_end > self.param_off && self.sess_off < param_end
+        {
+            return false;
+        }
+        self.len <= buf_len
+    }
 }
 /// A credential certifying that “this response MAC matches”.
 ///
@@ -83,19 +103,30 @@ impl<P: TisPhy> Guarded<P> {
         ordinal: u32,
         attrs: u8,
     ) -> Result<Authenticated, SecErr> {
+        if !lay.validate(cmd.len()) {
+            self.sess.close();
+            return Err(SecErr::Auth(AuthErr::Malformed));
+        }
         self.sess.begin(rng, ordinal, attrs);
         let handle = self.sess.handle();
         let nonce = self.sess.our_nonce();
         let sattrs = self.sess.attrs();
         write_cmd_session(cmd, lay.sess_off, handle, &nonce, sattrs);
-        self.sess.finalize::<S, H>(
-            cmd,
-            lay.sess_off,
-            lay.index,
-            names,
-            lay.param_off,
-            lay.param_len,
-        );
+        if self
+            .sess
+            .finalize::<S, H>(
+                cmd,
+                lay.sess_off,
+                lay.index,
+                names,
+                lay.param_off,
+                lay.param_len,
+            )
+            .is_err()
+        {
+            self.sess.close();
+            return Err(SecErr::Auth(AuthErr::Malformed));
+        }
         let n = match self.x.run(&*cmd, lay.len, &mut self.rbuf) {
             Ok((n, rc)) => {
                 if rc != RC_SUCCESS {
