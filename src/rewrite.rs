@@ -29,12 +29,21 @@ fn write_be32(b: &mut [u8], off: usize, v: u32) {
 /// Replace the virtual handles in the command handle area with physical handles.
 ///
 /// `nr_handles` is provided by the command-property table and is therefore a stage-2 encoding artifact;
-/// here it is treated as an already-validated parameter.
+/// the command buffer must contain at least `HEADER_SIZE + 4 * nr_handles` bytes.
 pub fn map_command_handles(
     tbl: &SpaceTable,
     nr_handles: usize,
     cmd: &mut [u8],
 ) -> Result<(), SpaceErr> {
+    if nr_handles == 0 {
+        return Ok(());
+    }
+    let required_len = nr_handles
+        .checked_mul(4)
+        .and_then(|handle_len| HEADER_SIZE.checked_add(handle_len));
+    if required_len.is_none_or(|required| cmd.len() < required) {
+        return Err(SpaceErr::Malformed);
+    }
     for i in 0..nr_handles {
         let h = read_be32(cmd, HEADER_SIZE + 4 * i);
         if is_transient_exec(h) && tbl.resolve(h).is_none() {
@@ -177,6 +186,26 @@ pub fn map_capability_handles(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_handles_rejects_short_buffers() {
+        let mut cmd = [0u8; HEADER_SIZE];
+        let original = cmd;
+
+        let result = map_command_handles(&SpaceTable::new(), 1, &mut cmd);
+
+        assert!(matches!(result, Err(SpaceErr::Malformed)));
+        assert_eq!(cmd, original);
+    }
+
+    #[test]
+    fn command_handles_accepts_empty_zero_handle_command() {
+        let mut cmd = [];
+
+        let result = map_command_handles(&SpaceTable::new(), 0, &mut cmd);
+
+        assert!(result.is_ok());
+    }
 
     #[test]
     fn response_handle_rejects_short_buffers() {
