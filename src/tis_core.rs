@@ -81,8 +81,9 @@ impl<P: TisPhy> Tis<P> {
     }
     /// Request locality.
     ///
-    /// On failure it guarantees no ownership is held — if a partially failed request leaves the flag as
-    /// “held,” the subsequent release would free a resource that was never acquired.
+    /// A failure preserves the ownership state at entry: if the transport is already holding locality,
+    /// the held flag remains set; if it entered unheld, the held flag remains clear. It does not attempt
+    /// to release locality that this call did not acquire.
     pub fn request_locality(&mut self, budget: u32) -> Result<(), TisErr> {
         if self.check_locality()? {
             self.held = true;
@@ -199,11 +200,10 @@ impl<P: TisPhy> Tis<P> {
     }
     /// Send a command and receive a response.
     ///
-    /// **There is only one return site for locality, and it is not inside any conditional branch.** After the
-    /// request is made, all potentially failing actions are moved into an internal function, making the
-    /// release of locality an unconditional cleanup statement — as a result, “every path exits with locality
-    /// released” does not need to be checked path by path; it is directly encoded in the control flow. This is
-    /// the one place where the layer is intentionally restructured for verifiability.
+    /// After the initial locality request succeeds, every path reaches the single, unconditional
+    /// [`relinquish_locality`](Self::relinquish_locality) cleanup site. All potentially failing actions after
+    /// acquisition are moved into an internal function. If the initial request itself fails, this method
+    /// returns before requesting release, so ownership is preserved according to the state at entry.
     ///
     /// `exec_budget` is the upper bound on the polling count used to wait for `STS_DATA_AVAIL`, supplied by
     /// the caller according to the command code (see [`crate::xfer::poll_budget`]). Different commands can
