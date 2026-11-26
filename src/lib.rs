@@ -51,7 +51,9 @@ mod handoff;
 pub use auth::{AuthErr, RspAuth, SA_CONTINUE_SESSION, SA_DECRYPT, SA_ENCRYPT};
 pub use boot::{bring_up, Boot, BootErr, Limits};
 pub use buf::{BufKind, TpmBuf, TPM2B_HEADER_SIZE, TPM_HEADER_SIZE};
-pub use crypto::{AesCfb, HmacSha256Ctx, NonceSource, Sha256Ctx, NONCE_LEN, SHA256_LEN};
+pub use crypto::{
+    AesCfb, HmacSha256Ctx, NonceSource, Sha256Ctx, NONCE_LEN, PASSPHRASE_MAX, SHA256_LEN,
+};
 pub use handoff::{attach, close_ctx, open_ctx, to_auth, to_plain};
 pub use link::{ChipLink, LiveSet};
 pub use mmio::TisMmio;

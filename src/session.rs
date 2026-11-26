@@ -113,10 +113,16 @@ impl AuthSession {
     ///
     /// This stripping step cannot be skipped: the same passphrase with or without trailing zero bytes yields
     /// different MACs, and callers often pass a fixed-length buffer.
+    ///
+    /// The passphrase after trailing-zero stripping must fit in [`PASSPHRASE_MAX`] bytes. If it is longer,
+    /// this call leaves the existing passphrase unchanged.
     pub fn set_passphrase(&mut self, pw: &[u8]) {
         let mut n = pw.len();
         while n > 0 && pw[n - 1] == 0 {
             n -= 1;
+        }
+        if n > PASSPHRASE_MAX {
+            return;
         }
         self.passphrase[..n].copy_from_slice(&pw[..n]);
         self.passphrase_len = n;
@@ -268,4 +274,55 @@ pub fn encrypt_param<A: AesCfb>(aes: &A, material: &[u8; CFB_MATERIAL_LEN], para
 /// text for the upper layer.
 pub fn decrypt_param<A: AesCfb>(aes: &A, material: &[u8; CFB_MATERIAL_LEN], param: &mut [u8]) {
     aes.decrypt(material, param);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestHmac;
+
+    impl HmacSha256Ctx for TestHmac {
+        fn with_key(_key: &[u8]) -> Self {
+            Self
+        }
+
+        fn update(&mut self, _data: &[u8]) {}
+
+        fn finish(self) -> [u8; SHA256_LEN] {
+            [0u8; SHA256_LEN]
+        }
+    }
+
+    #[test]
+    fn set_passphrase_rejects_too_long_without_changing_existing_value() {
+        let mut session =
+            AuthSession::open_session::<TestHmac>(1, &[], [1u8; NONCE_LEN], [2u8; NONCE_LEN]);
+
+        session.set_passphrase(&[0xAA; PASSPHRASE_MAX]);
+        assert_eq!(session.passphrase_len, PASSPHRASE_MAX);
+
+        session.set_passphrase(&[0xBB; PASSPHRASE_MAX + 1]);
+        assert_eq!(session.passphrase_len, PASSPHRASE_MAX);
+        assert_eq!(
+            &session.passphrase[..PASSPHRASE_MAX],
+            &[0xAA; PASSPHRASE_MAX]
+        );
+    }
+
+    #[test]
+    fn set_passphrase_strips_trailing_zeroes_before_limit_check() {
+        let mut session =
+            AuthSession::open_session::<TestHmac>(1, &[], [1u8; NONCE_LEN], [2u8; NONCE_LEN]);
+        let mut pw = [0u8; PASSPHRASE_MAX + 1];
+        pw[..PASSPHRASE_MAX].fill(0xCC);
+
+        session.set_passphrase(&pw);
+
+        assert_eq!(session.passphrase_len, PASSPHRASE_MAX);
+        assert_eq!(
+            &session.passphrase[..PASSPHRASE_MAX],
+            &[0xCC; PASSPHRASE_MAX]
+        );
+    }
 }

@@ -13,7 +13,7 @@ pub const AES_BLOCK_LEN: usize = 16;
 /// to a single round; see the explanation there.
 pub const CFB_MATERIAL_LEN: usize = AES_KEY_LEN + AES_BLOCK_LEN;
 /// Maximum space for a password in the session structure.
-pub(crate) const PASSPHRASE_MAX: usize = SHA256_LEN;
+pub const PASSPHRASE_MAX: usize = SHA256_LEN;
 /// Maximum HMAC key material: session key followed by passphrase.
 pub(crate) const KEY_MATERIAL_MAX: usize = SHA256_LEN + PASSPHRASE_MAX;
 pub(crate) fn be16_arr(v: u16) -> [u8; 2] {
