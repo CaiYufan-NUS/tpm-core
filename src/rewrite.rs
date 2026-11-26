@@ -69,12 +69,17 @@ pub enum HeaderOutcome {
     OutOfSlots { flush: u32 },
 }
 /// Process the handle returned in the response header.
+///
+/// The response buffer must contain at least the header and the four-byte response handle.
 pub fn map_response_handle(
     tbl: &mut SpaceTable,
     has_rhandle: bool,
     rsp: &mut [u8],
 ) -> HeaderOutcome {
     if !has_rhandle {
+        return HeaderOutcome::NoHandle;
+    }
+    if rsp.len() < HEADER_SIZE + 4 {
         return HeaderOutcome::NoHandle;
     }
     let rc = read_be32(rsp, 6);
@@ -167,4 +172,21 @@ pub fn map_capability_handles(
     write_be32(rsp, CAP_COUNT_OFF, j as u32);
     write_be32(rsp, RSP_LENGTH_OFF, new_len as u32);
     Ok(new_len)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn response_handle_rejects_short_buffers() {
+        let mut tbl = SpaceTable::new();
+
+        for len in 0..HEADER_SIZE + 4 {
+            let mut rsp = [0u8; HEADER_SIZE + 4];
+            rsp[0..len].fill(0);
+            let outcome = map_response_handle(&mut tbl, true, &mut rsp[..len]);
+            assert!(matches!(outcome, HeaderOutcome::NoHandle));
+        }
+    }
 }
