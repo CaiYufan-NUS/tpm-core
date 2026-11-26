@@ -108,7 +108,7 @@ pub(crate) fn patch_hmac(out: &mut [u8], off: usize, mac: &[u8; SHA256_LEN]) {
 /// We record only the offsets and not the content: the parameter area may be thousands of bytes long,
 /// and the checksum only needs a way to point to it. The nonce is the exception—it must survive across
 /// rounds and therefore must be copied out.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct RspAuth {
     /// Start of the parameter area.
     pub param_off: usize,
