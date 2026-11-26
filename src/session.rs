@@ -160,14 +160,30 @@ impl AuthSession {
         names: &[u8],
         param_off: usize,
         param_len: usize,
-    ) {
-        let params = &buf[param_off..param_off + param_len];
+    ) -> Result<(), AuthErr> {
+        let Some(sess_end) = sess_off.checked_add(CMD_SESSION_LEN) else {
+            self.state = SessionState::Closed;
+            return Err(AuthErr::Malformed);
+        };
+        let Some(param_end) = param_off.checked_add(param_len) else {
+            self.state = SessionState::Closed;
+            return Err(AuthErr::Malformed);
+        };
+        if sess_end > buf.len()
+            || param_end > buf.len()
+            || sess_end > param_off && sess_off < param_end
+        {
+            self.state = SessionState::Closed;
+            return Err(AuthErr::Malformed);
+        }
+        let params = &buf[param_off..param_end];
         let cph = cp_hash::<S>(self.ordinal, names, params);
         let km = self.key_buf();
         let key = km.as_slice();
         let mac = auth_hmac::<H>(key, &cph, &self.our_nonce, &self.tpm_nonce, self.attrs);
         patch_hmac(buf, sess_off, &mac);
         self.state = SessionState::Pending(index);
+        Ok(())
     }
     /// Validate the response MAC.
     ///
@@ -281,6 +297,7 @@ mod tests {
     use super::*;
 
     struct TestHmac;
+    struct TestSha;
 
     impl HmacSha256Ctx for TestHmac {
         fn with_key(_key: &[u8]) -> Self {
@@ -292,6 +309,29 @@ mod tests {
         fn finish(self) -> [u8; SHA256_LEN] {
             [0u8; SHA256_LEN]
         }
+    }
+
+    impl Sha256Ctx for TestSha {
+        fn new() -> Self {
+            Self
+        }
+
+        fn update(&mut self, _data: &[u8]) {}
+
+        fn finish(self) -> [u8; SHA256_LEN] {
+            [0u8; SHA256_LEN]
+        }
+    }
+
+    #[test]
+    fn finalize_rejects_out_of_bounds_layout() {
+        let mut session =
+            AuthSession::open_session::<TestHmac>(1, &[], [1u8; NONCE_LEN], [2u8; NONCE_LEN]);
+        let mut cmd = [0u8; 16];
+
+        let result = session.finalize::<TestSha, TestHmac>(&mut cmd, 0, 0, &[], 0, 100);
+
+        assert!(matches!(result, Err(AuthErr::Malformed)));
     }
 
     #[test]

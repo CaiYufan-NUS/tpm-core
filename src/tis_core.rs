@@ -118,7 +118,13 @@ impl<P: TisPhy> Tis<P> {
     /// On success, the FIFO receives exactly the command itself — no more, no less, in the same order. On
     /// failure, the FIFO is definitely cleared and no half-command is left behind: if a half-command remains
     /// in the device, the next send would assemble a packet that nobody ever wrote.
+    ///
+    /// If `len` is zero or greater than `cmd.len()`, this function returns [`TisErr::BadLength`] before any
+    /// FIFO access.
     pub fn send_data(&mut self, cmd: &[u8], len: usize) -> Result<(), TisErr> {
+        if len == 0 || len > cmd.len() {
+            return Err(TisErr::BadLength);
+        }
         self.send_data_inner(cmd, len).inspect_err(|_| {
             let sts_addr = reg_sts(self.locality);
             self.phy.reset_fifo(sts_addr);
@@ -209,6 +215,9 @@ impl<P: TisPhy> Tis<P> {
     /// the caller according to the command code (see [`crate::xfer::poll_budget`]). Different commands can
     /// differ by two orders of magnitude in execution time; only a command-specific budget lets us satisfy
     /// both “fast commands time out quickly” and “slow commands are not falsely reported as timed out.”
+    ///
+    /// If `len` is zero or greater than `cmd.len()`, this function returns [`TisErr::BadLength`] before
+    /// requesting locality.
     pub fn transmit(
         &mut self,
         cmd: &[u8],
@@ -216,6 +225,9 @@ impl<P: TisPhy> Tis<P> {
         out: &mut [u8],
         exec_budget: u32,
     ) -> Result<usize, TisErr> {
+        if len == 0 || len > cmd.len() {
+            return Err(TisErr::BadLength);
+        }
         self.request_locality(budget_of(TIMEOUT_A_MS))?;
         let res = self.exchange(cmd, len, out, exec_budget);
         self.relinquish_locality();
@@ -243,5 +255,141 @@ impl<P: TisPhy> Tis<P> {
         })?;
         self.phy.reset_fifo(sts_addr);
         Ok(n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct CountingPhy {
+        read8_script: [u8; 4],
+        read8_len: usize,
+        read8_pos: usize,
+        read8_calls: usize,
+        read32_calls: usize,
+        write8_calls: usize,
+        write32_calls: usize,
+        read_fifo_calls: usize,
+        write_fifo_calls: usize,
+        reset_fifo_calls: usize,
+        delay_calls: usize,
+    }
+
+    impl CountingPhy {
+        fn new(read8_script: [u8; 4], read8_len: usize) -> Self {
+            Self {
+                read8_script,
+                read8_len,
+                read8_pos: 0,
+                read8_calls: 0,
+                read32_calls: 0,
+                write8_calls: 0,
+                write32_calls: 0,
+                read_fifo_calls: 0,
+                write_fifo_calls: 0,
+                reset_fifo_calls: 0,
+                delay_calls: 0,
+            }
+        }
+    }
+
+    impl TisPhy for CountingPhy {
+        fn read8(&mut self, _addr: u32) -> Result<u8, TisErr> {
+            self.read8_calls += 1;
+            if self.read8_pos < self.read8_len {
+                let v = self.read8_script[self.read8_pos];
+                self.read8_pos += 1;
+                Ok(v)
+            } else {
+                Ok(0)
+            }
+        }
+        fn read32(&mut self, _addr: u32) -> Result<u32, TisErr> {
+            self.read32_calls += 1;
+            Ok(0)
+        }
+        fn write8(&mut self, _addr: u32, _value: u8) -> Result<(), TisErr> {
+            self.write8_calls += 1;
+            Ok(())
+        }
+        fn write32(&mut self, _addr: u32, _value: u32) -> Result<(), TisErr> {
+            self.write32_calls += 1;
+            Ok(())
+        }
+        fn read_fifo(
+            &mut self,
+            _addr: u32,
+            _out: &mut [u8],
+            _off: usize,
+            _n: usize,
+        ) -> Result<(), TisErr> {
+            self.read_fifo_calls += 1;
+            Ok(())
+        }
+        fn write_fifo(
+            &mut self,
+            _addr: u32,
+            _data: &[u8],
+            _off: usize,
+            _n: usize,
+        ) -> Result<(), TisErr> {
+            self.write_fifo_calls += 1;
+            Ok(())
+        }
+        fn reset_fifo(&mut self, _addr: u32) {
+            self.reset_fifo_calls += 1;
+        }
+        fn delay(&mut self) {
+            self.delay_calls += 1;
+        }
+    }
+
+    #[test]
+    fn send_data_rejects_zero_length_without_fifo_access() {
+        let mut tis = Tis::new(CountingPhy::new([0; 4], 0), 0);
+        assert!(matches!(tis.send_data(&[], 0), Err(TisErr::BadLength)));
+        assert_eq!(tis.phy.read8_calls, 0);
+        assert_eq!(tis.phy.read32_calls, 0);
+        assert_eq!(tis.phy.write_fifo_calls, 0);
+        assert_eq!(tis.phy.reset_fifo_calls, 0);
+    }
+
+    #[test]
+    fn send_data_rejects_overlong_length_without_fifo_access() {
+        let mut tis = Tis::new(CountingPhy::new([0; 4], 0), 0);
+        assert!(matches!(
+            tis.send_data(&[0u8; 4], 5),
+            Err(TisErr::BadLength)
+        ));
+        assert_eq!(tis.phy.read8_calls, 0);
+        assert_eq!(tis.phy.read32_calls, 0);
+        assert_eq!(tis.phy.write_fifo_calls, 0);
+        assert_eq!(tis.phy.reset_fifo_calls, 0);
+    }
+
+    #[test]
+    fn send_data_accepts_equal_length_boundary() {
+        let mut tis = Tis::new(
+            CountingPhy::new([STS_COMMAND_READY, STS_VALID, STS_VALID, 0], 3),
+            0,
+        );
+        assert!(tis.send_data(&[0xAA], 1).is_ok());
+        assert_eq!(tis.phy.write_fifo_calls, 1);
+        assert_eq!(tis.phy.reset_fifo_calls, 0);
+    }
+
+    #[test]
+    fn transmit_rejects_invalid_length_before_acquiring_locality() {
+        let mut tis = Tis::new(CountingPhy::new([0; 4], 0), 0);
+        let mut out = [0u8; 16];
+        assert!(matches!(
+            tis.transmit(&[], 0, &mut out, 1),
+            Err(TisErr::BadLength)
+        ));
+        assert!(!tis.is_holding_locality());
+        assert_eq!(tis.phy.read8_calls, 0);
+        assert_eq!(tis.phy.write8_calls, 0);
+        assert_eq!(tis.phy.write_fifo_calls, 0);
     }
 }
