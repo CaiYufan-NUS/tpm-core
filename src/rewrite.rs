@@ -113,6 +113,8 @@ pub fn map_response_handle(
 /// Removal is a direct expression of isolation: when a space enumerates transient objects, it should only
 /// see its own.
 ///
+/// `len` is the length of the response actually received and must not exceed `rsp.len()`.
+///
 /// Returns the rewritten total packet length.
 pub fn map_capability_handles(
     tbl: &SpaceTable,
@@ -120,6 +122,9 @@ pub fn map_capability_handles(
     rsp: &mut [u8],
     len: usize,
 ) -> Result<usize, SpaceErr> {
+    if len > rsp.len() {
+        return Err(SpaceErr::Malformed);
+    }
     if !is_cap_query {
         return Ok(len);
     }
