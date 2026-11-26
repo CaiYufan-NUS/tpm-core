@@ -1,5 +1,9 @@
 use super::handle::*;
 
+fn assert_slot_index(i: usize) {
+    assert!(i < SLOTS, "slot index out of bounds");
+}
+
 /// Slot state in the context table.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CtxSlot {
@@ -34,7 +38,12 @@ impl Default for SpaceTable {
 impl SpaceTable {
     /// Mark the slot as empty or saved. These two states do not carry a handle and never violate the
     /// invariant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `i` is outside the fixed slot range.
     pub fn set_slot_free(&mut self, i: usize, saved: bool) {
+        assert_slot_index(i);
         self.ctx[i] = if saved {
             CtxSlot::Saved
         } else {
@@ -46,7 +55,12 @@ impl SpaceTable {
     /// “Not already registered” is a precondition rather than a runtime check: the call sites (`intern`,
     /// load path) already inspected the table once, and checking again would be wasted work. The injective
     /// property is carried by this precondition without introducing any trust assumption.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `i` is outside the fixed slot range.
     pub fn set_slot_live(&mut self, i: usize, p: u32) {
+        assert_slot_index(i);
         self.ctx[i] = CtxSlot::Live(p);
     }
     /// Virtual handle → physical handle.
@@ -93,13 +107,31 @@ impl SpaceTable {
     pub fn has_session_exec(&self, h: u32) -> bool {
         self.sessions.contains(&h)
     }
+    /// Return the session handle in slot `i`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `i` is outside the fixed slot range.
     pub fn session_at(&self, i: usize) -> u32 {
+        assert_slot_index(i);
         self.sessions[i]
     }
+    /// Clear the session handle in slot `i`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `i` is outside the fixed slot range.
     pub fn clear_session(&mut self, i: usize) {
+        assert_slot_index(i);
         self.sessions[i] = 0;
     }
+    /// Return the context slot state at index `i`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `i` is outside the fixed slot range.
     pub fn slot_at(&self, i: usize) -> CtxSlot {
+        assert_slot_index(i);
         self.ctx[i]
     }
 }
