@@ -42,6 +42,19 @@ pub struct TpmBuf<const N: usize> {
     pub handles: u8,
 }
 impl<const N: usize> TpmBuf<N> {
+    fn payload_fits_tpm2b(new_len: usize) -> bool {
+        new_len >= TPM2B_HEADER_SIZE && (new_len - TPM2B_HEADER_SIZE) <= u16::MAX as usize
+    }
+    fn can_append(&self, add: usize) -> Option<usize> {
+        let new_len = self.length.checked_add(add)?;
+        if new_len > N {
+            return None;
+        }
+        if self.is_tpm2b() && !Self::payload_fits_tpm2b(new_len) {
+            return None;
+        }
+        Some(new_len)
+    }
     fn put_be16(&mut self, at: usize, v: u16) {
         self.data[at..at + 2].copy_from_slice(&v.to_be_bytes());
     }
@@ -113,53 +126,52 @@ impl<const N: usize> TpmBuf<N> {
         if self.overflow {
             return;
         }
-        let avail: usize = N - self.length;
-        if src.len() > avail {
+        let Some(new_len) = self.can_append(src.len()) else {
             self.overflow = true;
             return;
-        }
+        };
         let start: usize = self.length;
-        self.data[start..start + src.len()].copy_from_slice(src);
-        self.length = start + src.len();
+        self.data[start..new_len].copy_from_slice(src);
+        self.length = new_len;
         self.sync_length();
     }
     pub fn append_u8(&mut self, v: u8) {
         if self.overflow {
             return;
         }
-        if self.length >= N {
+        let Some(new_len) = self.can_append(1) else {
             self.overflow = true;
             return;
-        }
+        };
         let start = self.length;
         self.data[start] = v;
-        self.length = start + 1;
+        self.length = new_len;
         self.sync_length();
     }
     pub fn append_u16(&mut self, v: u16) {
         if self.overflow {
             return;
         }
-        if N - self.length < 2 {
+        let Some(new_len) = self.can_append(2) else {
             self.overflow = true;
             return;
-        }
+        };
         let start = self.length;
         self.put_be16(start, v);
-        self.length = start + 2;
+        self.length = new_len;
         self.sync_length();
     }
     pub fn append_u32(&mut self, v: u32) {
         if self.overflow {
             return;
         }
-        if N - self.length < 4 {
+        let Some(new_len) = self.can_append(4) else {
             self.overflow = true;
             return;
-        }
+        };
         let start = self.length;
         self.put_be32(start, v);
-        self.length = start + 4;
+        self.length = new_len;
         self.sync_length();
     }
     /// Corresponds to `tpm_buf_append_handle()`.
@@ -252,5 +264,40 @@ impl<const N: usize> TpmBuf<N> {
     /// overflow**, so it requires `!overflow`.
     pub fn as_wire(&self) -> &[u8] {
         &self.data[0..self.length]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+
+    #[test]
+    fn sized_append_rejects_unrepresentable_payload_length() {
+        let mut b = TpmBuf::<65538>::new_sized();
+        b.append(&vec![0xA5u8; 65536]);
+        assert!(b.has_overflow());
+        assert_eq!(b.len(), TPM2B_HEADER_SIZE);
+        assert_eq!(u16::from_be_bytes([b.as_wire()[0], b.as_wire()[1]]), 0);
+    }
+
+    #[test]
+    fn sized_append_allows_max_representable_payload_only() {
+        let mut b = TpmBuf::<65538>::new_sized();
+        b.append(&vec![0x5Au8; 65535]);
+        assert!(!b.has_overflow());
+        assert_eq!(b.len(), TPM2B_HEADER_SIZE + 65535);
+        assert_eq!(
+            u16::from_be_bytes([b.as_wire()[0], b.as_wire()[1]]),
+            u16::MAX
+        );
+
+        b.append_u8(0x11);
+        assert!(b.has_overflow());
+        assert_eq!(b.len(), TPM2B_HEADER_SIZE + 65535);
+        assert_eq!(
+            u16::from_be_bytes([b.as_wire()[0], b.as_wire()[1]]),
+            u16::MAX
+        );
     }
 }
